@@ -972,6 +972,64 @@ def get_disks():
     return jsonify(response), 200
 
 
+@app.route('/api/disk/qos/<pool>/<image>', methods=['GET', 'PUT'])
+@requires_restricted_auth
+def disk_qos(pool, image):
+    """
+    Manage the QoS settings for a disk
+    :param pool: (str) pool name
+    :param image: (str) rbd image name
+    :param qos: (JSON dict) valid QoS overrides
+    **RESTRICTED**
+    Examples:
+    curl --user admin:admin -X GET http://192.168.122.69:5000/api/disk/qos/rbd/volume
+    curl --user admin:admin -d qos='{"rbd_qos_bps_limit": "1024", "rbd_qos_iops_limit": "10000"}'
+        -X PUT http://192.168.122.69:5000/api/disk/qos/rbd/volume
+    """
+
+    image_id = '{}/{}'.format(pool, image)
+
+    config.refresh()
+
+    if image_id not in config.config['disks']:
+        return jsonify(message="rbd image {} not found".format(image_id)), 404
+
+    disk_dict = config.config["disks"][image_id]
+    global dev_status_watcher
+    disk_status = dev_status_watcher.get_dev_status(image_id)
+    if disk_status:
+        disk_dict['status'] = disk_status.get_status_dict()
+    else:
+        disk_dict['status'] = {'state': 'Unknown'}
+
+    backstore = disk_dict['backstore']
+
+    if request.method == 'GET':
+        rbd_image = RBDDev(image, 0, backstore, pool)
+        qos = rbd_image.rbd_qos_get()
+        if rbd_image.error:
+            return jsonify(message="Failed to get QoS settings - "
+                                   "{}".format(rbd_image.error_msg)), 500
+        return jsonify(qos), 200
+
+    if request.method == 'PUT':
+        qos = request.form.get('qos')
+        if qos is None:
+            return jsonify(message="QoS settings not provided"), 400
+
+        try:
+            qos_dict = json.loads(qos)
+        except ValueError:
+            return jsonify(message="Invalid QoS settings format"), 400
+
+        rbd_image = RBDDev(image, 0, backstore, pool)
+        rbd_image.rbd_qos_set(qos_dict)
+        if rbd_image.error:
+            return jsonify(message="Failed to set QoS settings - "
+                                   "{}".format(rbd_image.error_msg)), 500
+        return jsonify(message="QoS settings updated"), 200
+
+
 @app.route('/api/disk/<pool>/<image>', methods=['GET', 'PUT', 'DELETE'])
 @requires_restricted_auth
 def disk(pool, image):

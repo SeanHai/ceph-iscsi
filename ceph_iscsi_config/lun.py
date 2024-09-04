@@ -46,6 +46,21 @@ class RBDDev(object):
         ]
     }
 
+    rbd_qos_conf_list = [
+        'rbd_qos_bps_limit',
+        'rbd_qos_bps_burst',
+        'rbd_qos_iops_limit',
+        'rbd_qos_iops_burst'
+        'rbd_qos_read_bps_limit',
+        'rbd_qos_read_bps_burst',
+        'rbd_qos_read_iops_limit',
+        'rbd_qos_read_iops_burst',
+        'rbd_qos_write_bps_limit',
+        'rbd_qos_write_bps_burst',
+        'rbd_qos_write_iops_limit',
+        'rbd_qos_write_iops_burst'
+    ]
+
     def __init__(self, image, size, backstore, pool=None):
         self.image = image
         self.size_bytes = convert_2_bytes(size)
@@ -57,6 +72,7 @@ class RBDDev(object):
         self.error = False
         self.error_msg = ''
         self.changed = False
+        self.metadata_conf_prefix = 'conf_'
 
     def create(self):
         """
@@ -157,6 +173,83 @@ class RBDDev(object):
                                               "{}".format(self.image))
                         else:
                             self.changed = True
+
+    def rbd_metadata_set(self, key, value):
+        """
+        Set metadata on the rbd image
+        :param key: metadata key (str)
+        :param value: metadata value (str)
+        :return: nothing, but the objects error attribute is set if there
+        are problems
+        """
+
+        with rados.Rados(conffile=settings.config.cephconf,
+                         name=settings.config.cluster_client_name) as cluster:
+            with cluster.open_ioctx(self.pool) as ioctx:
+                with rbd.Image(ioctx, self.image) as rbd_image:
+                    try:
+                        rbd_image.metadata_set(self.metadata_conf_prefix + key, value)
+                    except Exception as err:
+                        self.error = True
+                        self.error_msg = ("Failed to set {} to {} on rbd image "
+                                          "{} in pool {} : {}".format(key, value, self.image, self.pool, err))
+
+    def rbd_metadata_get(self, key):
+        """
+        Get metadata from the rbd image
+        :param key: metadata key (str)
+        :return: metadata value (str) or None if the key doesn't exist
+        """
+
+        with rados.Rados(conffile=settings.config.cephconf,
+                         name=settings.config.cluster_client_name) as cluster:
+            with cluster.open_ioctx(self.pool) as ioctx:
+                with rbd.Image(ioctx, self.image) as rbd_image:
+                    try:
+                        value = rbd_image.metadata_get(self.metadata_conf_prefix + key)
+                    except KeyError:
+                        return None
+                    except Exception as err:
+                        self.error = True
+                        self.error_msg = ("Failed to get {} from rbd image "
+                                          "{} in pool {} : {}".format(key, self.image, self.pool, err))
+                        return None
+        return value
+
+    def rbd_qos_get(self):
+        """
+        Get the QoS settings from the rbd image
+        :return: dict with the QoS settings
+        """
+
+        qos_settings = {}
+        for key in RBDDev.rbd_qos_conf_list:
+            val = self.rbd_metadata_get(key)
+            if self.error:
+                return {}
+            qos_settings[key] = val
+
+        return qos_settings
+
+    def rbd_qos_set(self, qos_settings):
+        """
+        Set the QoS settings on the rbd image
+        :param qos_settings: dict with the QoS settings
+        :return: nothing, but the objects error attribute is set if there
+        are problems
+        """
+        # qos_settings is json object
+        # check key is in rbd_qos_conf_list
+        for key in qos_settings.keys():
+            if key not in RBDDev.rbd_qos_conf_list:
+                self.error = True
+                self.error_msg = ("Invalid QoS key: {}".format(key))
+                return
+
+        for key, value in qos_settings.items():
+            self.rbd_metadata_set(key, value)
+            if self.error:
+                return
 
     def _get_size_bytes(self):
         """
