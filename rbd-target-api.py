@@ -543,6 +543,31 @@ def get_config():
         return jsonify(result_config), 200
 
 
+@app.route('/api/gateways', methods=['GET'])
+@requires_restricted_auth
+def get_gateways():
+    """
+    Return all the gateway node info in the config to the caller
+    **RESTRICTED**
+    Examples:
+    curl --user admin:admin -X GET http://192.168.122.69:5000/api/gateways
+    """
+    # parse gateways, the original fornat: fqdn,ip;fqdn,ip
+    original_gateways = settings.config.gateways
+    gateways = []
+    for gw in original_gateways.split(';'):
+        if gw:
+            parts = gw.split(',')
+            if len(parts) != 2:
+                return jsonify(message="Invalid gateway format"), 500
+            fqdn, ip = parts
+            local = False
+            if fqdn == this_host():
+                local = True
+            gateways.append({"fqdn": fqdn, "ip": ip, "local": local})
+    return jsonify(gateways=gateways), 200
+
+
 @app.route('/api/gateways/<target_iqn>', methods=['GET'])
 @requires_restricted_auth
 def gateways(target_iqn=None):
@@ -1692,7 +1717,7 @@ def targetauth(target_iqn=None):
                             [0-9a-zA-Z] and '@' '-' '_' '/'
     **RESTRICTED**
     Examples:
-    curl --user admin:admin -d auth='disable_acl'
+    curl --user admin:admin -d action='disable_acl'
         -X PUT http://192.168.122.69:5000/api/targetauth/iqn.2003-01.com.redhat.iscsi-gw:iscsi-igw
     """
 
